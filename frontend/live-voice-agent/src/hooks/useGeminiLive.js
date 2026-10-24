@@ -15,6 +15,11 @@ export default function useGeminiLive() {
   const sourceRef = useRef(null);
   const nextPlayTimeRef = useRef(0);
   const playbackSourcesRef = useRef(new Set());
+  const [chatMessages, setChatMessages] = useState([]);
+  const [currentUserText, setCurrentUserText] = useState("");
+  const [currentAIText, setCurrentAIText] = useState("");
+  const userTextRef = useRef("");
+  const aiTextRef = useRef("");
 
   function base64ToBytes(base64) {
     const binary = atob(base64);
@@ -149,21 +154,40 @@ export default function useGeminiLive() {
     JSON.stringify(message, null, 2)
   );
 
-            const content = message.serverContent;
-            if (content?.inputTranscription) {
-  console.log("YOU SAID:", content.inputTranscription.text);
-}
-if (content?.outputTranscription) {
-  console.log("GEMINI SAID:", content.outputTranscription.text);
-}
+             const content = message.serverContent;
 
-if (content?.modelTurn?.parts) {
-  for (const part of content.modelTurn.parts) {
-    if (part.inlineData) {
-      console.log("GEMINI AUDIO RECEIVED:", part.inlineData.mimeType);
+    if (!content) return;
+
+    // Live transcription of what the user says
+    if (content.inputTranscription?.text) {
+      userTextRef.current += content.inputTranscription.text;
+      setCurrentUserText(userTextRef.current);
     }
-  }
-}
+
+    // Live transcription of Gemini's spoken response
+    if (content.outputTranscription?.text) {
+        aiTextRef.current += content.outputTranscription.text;
+        setCurrentAIText(aiTextRef.current);
+    }
+
+    if (content.turnComplete) {
+        const userText = userTextRef.current.trim();
+        const aiText = aiTextRef.current.trim();
+
+        setChatMessages((previous) => [
+            ...previous,
+            ...(userText ? [{ role: "user", text: userText }] : []),
+            ...(aiText ? [{ role: "assistant", text: aiText }] : []),
+        ]);
+
+        userTextRef.current = "";
+        aiTextRef.current = "";
+
+        setCurrentUserText("");
+        setCurrentAIText("");
+    }
+
+
             const parts =
               message.serverContent?.modelTurn?.parts || [];
 
@@ -289,5 +313,8 @@ console.log("MIC RMS:", rms);
     error,
     connect,
     disconnect,
-  };
+    chatMessages,
+    currentUserText,
+    currentAIText,
+};
 }
