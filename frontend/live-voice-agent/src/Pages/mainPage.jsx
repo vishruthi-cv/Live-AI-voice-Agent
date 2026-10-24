@@ -1,8 +1,11 @@
 import React, { useState } from "react";
+import useGeminiLive from "../hooks/useGeminiLive";
 import { useNavigate } from "react-router-dom";
 
 function MainPage() {
     const navigate = useNavigate();
+
+    const { status, error, connect, disconnect } = useGeminiLive();
 
     // Simple beginner states
     const [isListening, setIsListening] = useState(false);
@@ -39,6 +42,8 @@ function MainPage() {
             <style>
                 {`@import url('https://fonts.googleapis.com/css2?family=Isometra&display=swap');`}
             </style>
+
+
 
 
             <div className="flex items-center justify-around border-b border-red-900/50 pb-4">
@@ -112,6 +117,25 @@ function MainPage() {
                                 {isListening ? "Listening" : "Speak"}
                             </span>
                         </button>
+                        <div className="rounded-full text-red-400 px-6 py-1.5 m-2">
+                            Status: {status}
+                        </div>
+                        <button
+                            onClick={status === "Connected" ? disconnect : connect}
+                            disabled={status === "Connecting"}
+                            className="rounded-xl bg-gray-500 px-5 py-2 font-semibold hover:bg-gray-300 disabled:opacity-50"
+                        >
+                            {status === "Connecting"
+                                ? "Connecting..."
+                                : status === "Connected"
+                                    ? "End Conversation"
+                                    : "Start Conversation"}
+                        </button>
+
+                        <p className="max-w-md text-center text-red-400">
+                            {error}
+                        </p>
+
 
                         <p className="text-xs text-gray-400 mt-4">
                             {isListening ? "Microphone is on. Click to stop." : "Click microphone button to talk."}
