@@ -10,7 +10,7 @@ function AppRoutes() {
         <div>
             <Routes>
                 <Route path="/" element={<Home />} />
-                <Route path="/main" element={<MainPage />} />
+                <Route path="/mainPage" element={<MainPage />} />
             </Routes>
         </div>
     )
