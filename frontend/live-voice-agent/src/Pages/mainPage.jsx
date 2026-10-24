@@ -1,28 +1,35 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef} from "react";
 import useGeminiLive from "../hooks/useGeminiLive";
 import { useNavigate } from "react-router-dom";
 
 function MainPage() {
     const navigate = useNavigate();
 
-    const { status, error, connect, disconnect } = useGeminiLive();
+    const { status, error, connect, disconnect, chatMessages,
+    currentUserText,
+    currentAIText, } = useGeminiLive();
 
     // Simple beginner states
-    const [isListening, setIsListening] = useState(false);
-    const [transcript, setTranscript] = useState("Your live transcription will appear here...");
+  
+    const isListening = status === "Connected";
+    const chatEndRef = useRef(null);
+
     const [inputText, setTextInput] = useState("");
     const [chatHistory, setChatHistory] = useState([
         ""
     ]);
 
+    useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+}, [chatMessages, currentUserText, currentAIText]);
+
+
     // Microphone toggle button
-    const handleMicClick = () => {
+    const handleMicClick = async() => {
         if (!isListening) {
-            setIsListening(true);
-            setTranscript("Listening... ");
+            disconnect();
         } else {
-            setIsListening(false);
-            setTranscript("Microphone stopped.");
+            await connect();
         }
     };
 
@@ -67,29 +74,84 @@ function MainPage() {
 
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-6 my-6">
 
-                <div className="bg-neutral-950 border border-red-900/60 rounded-xl p-4 flex flex-col">
-                    <div className="flex justify-between items-center mb-3">
-                        <h2 className="text-red-400 font-semibold text-sm uppercase">History Area</h2>
-                        <button
-                            onClick={() => setChatHistory([])}
-                            className="text-xs text-gray-500 hover:text-red-400"
-                        >
-                            Clear
-                        </button>
-                    </div>
+                
+<div className="bg-neutral-950 border border-red-900/60 rounded-xl p-4 flex flex-col min-h-[400px] md:min-h-0">
+    <div className="flex justify-between items-center mb-4">
+        <h2 className="text-red-400 font-semibold text-sm uppercase">
+            Live Conversation
+        </h2>
 
-                    <div className="flex-1 overflow-y-auto space-y-2 text-sm text-gray-300">
-                        {chatHistory.length === 0 ? (
-                            <p className="text-gray-600 text-xs italic">No history yet.</p>
-                        ) : (
-                            chatHistory.map((item, index) => (
-                                <div key={index} className="p-2 bg-neutral-900 border border-neutral-800 rounded">
-                                    {item}
-                                </div>
-                            ))
-                        )}
-                    </div>
+        <span className={`text-xs ${isListening ? "text-green-400" : "text-gray-500"}`}>
+            {isListening ? "● Connected" : "● Disconnected"}
+        </span>
+    </div>
+
+    <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+        {chatMessages.length === 0 &&
+         !currentUserText &&
+         !currentAIText && (
+            <p className="text-gray-500 text-sm text-center mt-10">
+                Your conversation will appear here.
+                <br />
+                Click the microphone to get started.
+            </p>
+        )}
+
+        {chatMessages.map((message, index) => (
+            <div
+                key={index}
+                className={`flex ${
+                    message.role === "user"
+                        ? "justify-end"
+                        : "justify-start"
+                }`}
+            >
+                <div
+                    className={`max-w-[90%] rounded-xl p-3 text-sm whitespace-pre-wrap break-words ${
+                        message.role === "user"
+                            ? "bg-red-950 border border-red-800 text-red-100"
+                            : "bg-neutral-900 border border-neutral-800 text-gray-200"
+                    }`}
+                >
+                    <p className="text-[10px] uppercase tracking-wider mb-1 opacity-60">
+                        {message.role === "user" ? "You" : "Gemini"}
+                    </p>
+                    {message.text}
                 </div>
+            </div>
+        ))}
+
+        {currentUserText && (
+            <div className="flex justify-end">
+                <div className="max-w-[90%] rounded-xl p-3 text-sm whitespace-pre-wrap break-words bg-red-950/70 border border-red-800/70 text-red-100">
+                    <p className="text-[10px] uppercase tracking-wider mb-1 opacity-60">
+                        You · Listening
+                    </p>
+                    {currentUserText}
+                    <span className="inline-block w-1.5 h-3 ml-1 bg-red-400 animate-pulse" />
+                </div>
+            </div>
+        )}
+
+        {currentAIText && (
+            <div className="flex justify-start">
+                <div className="max-w-[90%] rounded-xl p-3 text-sm whitespace-pre-wrap break-words bg-neutral-900 border border-neutral-800 text-gray-200">
+                    <p className="text-[10px] uppercase tracking-wider mb-1 text-purple-400">
+                        Gemini · Speaking
+                    </p>
+                    {currentAIText}
+                    <span className="inline-block w-1.5 h-3 ml-1 bg-purple-400 animate-pulse" />
+                </div>
+            </div>
+        )}
+
+        <div ref={chatEndRef} />
+    </div>
+
+    {error && (
+        <p className="text-red-400 text-xs mt-3">{String(error)}</p>
+    )}
+</div>
 
 
                 <div className="md:col-span-2 flex flex-col gap-6">
@@ -144,9 +206,7 @@ function MainPage() {
 
                     <div className="bg-neutral-950 border border-red-900/60 rounded-xl p-4">
                         <h2 className="text-red-400 font-semibold text-sm uppercase mb-2">Transcribe Area</h2>
-                        <div className="bg-neutral-900 border border-neutral-800 rounded p-3 text-sm text-gray-200 min-h-[60px]">
-                            {transcript}
-                        </div>
+                        
                     </div>
 
                 </div>

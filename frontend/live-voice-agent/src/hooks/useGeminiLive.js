@@ -138,6 +138,8 @@ export default function useGeminiLive() {
         model: "gemini-3.8-live",
         config: {
           responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
           systemInstruction:
             "You are a helpful, friendly voice assistant. " +
             "Keep answers conversational and concise.",
@@ -149,35 +151,44 @@ export default function useGeminiLive() {
           },
 
           onmessage: (message) => {
-             console.log(
-    "GEMINI MESSAGE JSON:",
-    JSON.stringify(message, null, 2)
-  );
-
-             const content = message.serverContent;
+    const content = message.serverContent;
 
     if (!content) return;
 
-    // Live transcription of what the user says
+    // Show the user's live transcription
     if (content.inputTranscription?.text) {
-      userTextRef.current += content.inputTranscription.text;
-      setCurrentUserText(userTextRef.current);
+        userTextRef.current += content.inputTranscription.text;
+        setCurrentUserText(userTextRef.current);
     }
 
-    // Live transcription of Gemini's spoken response
+    // Show Gemini's live response transcription
     if (content.outputTranscription?.text) {
         aiTextRef.current += content.outputTranscription.text;
         setCurrentAIText(aiTextRef.current);
     }
 
+    // Keep the existing audio playback
+    const parts = content.modelTurn?.parts || [];
+
+    for (const part of parts) {
+        if (part.inlineData?.data) {
+            playAudio(part.inlineData.data);
+        }
+    }
+
+    // Save the completed conversation turn
     if (content.turnComplete) {
         const userText = userTextRef.current.trim();
         const aiText = aiTextRef.current.trim();
 
         setChatMessages((previous) => [
             ...previous,
-            ...(userText ? [{ role: "user", text: userText }] : []),
-            ...(aiText ? [{ role: "assistant", text: aiText }] : []),
+            ...(userText
+                ? [{ role: "user", text: userText }]
+                : []),
+            ...(aiText
+                ? [{ role: "assistant", text: aiText }]
+                : []),
         ]);
 
         userTextRef.current = "";
@@ -186,17 +197,7 @@ export default function useGeminiLive() {
         setCurrentUserText("");
         setCurrentAIText("");
     }
-
-
-            const parts =
-              message.serverContent?.modelTurn?.parts || [];
-
-            for (const part of parts) {
-              if (part.inlineData?.data) {
-                playAudio(part.inlineData.data);
-              }
-            }
-          },
+},
 
           onerror: (event) => {
              console.error("Gemini Live error:", event);
@@ -204,10 +205,11 @@ export default function useGeminiLive() {
             setStatus("Error");
           },
 
-          onclose: () => {
-            console.log("Gemini Live WebSocket closed:", event);
-            setStatus("Disconnected");
-          },
+          onclose: (event) => {
+    console.log("Gemini Live WebSocket closed:", event);
+    setStatus("Disconnected");
+},
+
         },
       });
 
