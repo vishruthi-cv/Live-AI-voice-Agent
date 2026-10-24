@@ -2,19 +2,27 @@
 import { useRef, useState } from "react";
 import { GoogleGenAI, Modality } from "@google/genai";
 
-const BACKEND_URL = `http://localhost:${import.meta.env.VITE_PORT}`;
+const BACKEND_URL = `http://localhost:${import.meta.env.VITE_PORT || 5001}`;
 
 export default function useGeminiLive() {
   const [status, setStatus] = useState("Disconnected");
   const [error, setError] = useState("");
+  const [chatMessages, setChatMessages] = useState([]);
+  const [currentUserText, setCurrentUserText] = useState("");
+  const [currentAIText, setCurrentAIText] = useState("");
 
   const sessionRef = useRef(null);
   const audioContextRef = useRef(null);
   const micStreamRef = useRef(null);
   const processorRef = useRef(null);
   const sourceRef = useRef(null);
+  const silentGainRef = useRef(null);
+
   const nextPlayTimeRef = useRef(0);
   const playbackSourcesRef = useRef(new Set());
+
+  const userTextRef = useRef("");
+  const aiTextRef = useRef("");
 
   function base64ToBytes(base64) {
     const binary = atob(base64);
@@ -29,114 +37,198 @@ export default function useGeminiLive() {
 
   function playAudio(base64) {
     const context = audioContextRef.current;
-    if (!context) return;
 
-    const bytes = base64ToBytes(base64);
-    const pcm = new Int16Array(
-      bytes.buffer,
-      bytes.byteOffset,
-      Math.floor(bytes.byteLength / 2)
-    );
+    if (!context || context.state === "closed") return;
 
-    const audioBuffer = context.createBuffer(
-      1,
-      pcm.length,
-      24000
-    );
+    try {
+      const bytes = base64ToBytes(base64);
 
-    const channel = audioBuffer.getChannelData(0);
+      // Gemini audio responses are normally 16-bit PCM.
+      const sampleCount = Math.floor(bytes.byteLength / 2);
+      if (sampleCount === 0) return;
 
-    for (let i = 0; i < pcm.length; i++) {
-      channel[i] = pcm[i] / 32768;
+      const pcm = new Int16Array(
+        bytes.buffer,
+        bytes.byteOffset,
+        sampleCount
+      );
+
+      // Gemini Live audio output is 24 kHz PCM.
+      const audioBuffer = context.createBuffer(
+        1,
+        pcm.length,
+        24000
+      );
+
+      const channel = audioBuffer.getChannelData(0);
+
+      for (let i = 0; i < pcm.length; i++) {
+        channel[i] = pcm[i] / 32768;
+      }
+
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(context.destination);
+
+      playbackSourcesRef.current.add(source);
+
+      source.onended = () => {
+        playbackSourcesRef.current.delete(source);
+      };
+
+      const startAt = Math.max(
+        context.currentTime,
+        nextPlayTimeRef.current
+      );
+
+      source.start(startAt);
+      nextPlayTimeRef.current = startAt + audioBuffer.duration;
+
+      console.log(
+        "Playing Gemini audio:",
+        audioBuffer.duration,
+        "seconds; AudioContext:",
+        context.state
+      );
+    } catch (err) {
+      console.error("Audio playback failed:", err);
     }
-
-    const source = context.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(context.destination);
-    playbackSourcesRef.current.add(source);
-    source.onended = () => {
-      playbackSourcesRef.current.delete(source);
-    };
-
-    const startAt = Math.max(
-      context.currentTime,
-      nextPlayTimeRef.current
-    );
-
-    source.start(startAt);
-    nextPlayTimeRef.current = startAt + audioBuffer.duration;
   }
 
   async function disconnect() {
-    processorRef.current?.disconnect();
-    sourceRef.current?.disconnect();
+    // Disconnect microphone processing.
+    if (processorRef.current) {
+      processorRef.current.onaudioprocess = null;
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
 
-    processorRef.current = null;
+    sourceRef.current?.disconnect();
     sourceRef.current = null;
 
-    sessionRef.current?.close();
+    silentGainRef.current?.disconnect();
+    silentGainRef.current = null;
+
+    // Close the Gemini session.
+    const session = sessionRef.current;
     sessionRef.current = null;
 
+    if (session) {
+      try {
+        session.close();
+      } catch (err) {
+        console.warn("Error closing Gemini session:", err);
+      }
+    }
+
+    // Stop the microphone.
     micStreamRef.current?.getTracks().forEach((track) => {
       track.stop();
     });
     micStreamRef.current = null;
 
+    // Stop any audio that is still playing.
     playbackSourcesRef.current.forEach((source) => {
       try {
         source.stop();
-      } catch { }
+      } catch {
+        // The source may already have stopped.
+      }
     });
-    playbackSourcesRef.current.clear();
 
-    if (audioContextRef.current) {
-      await audioContextRef.current.close();
-      audioContextRef.current = null;
+    playbackSourcesRef.current.clear();
+    nextPlayTimeRef.current = 0;
+
+    // Close the audio context.
+    const context = audioContextRef.current;
+    audioContextRef.current = null;
+
+    if (context && context.state !== "closed") {
+      try {
+        await context.close();
+      } catch (err) {
+        console.warn("Error closing AudioContext:", err);
+      }
     }
 
+    userTextRef.current = "";
+    aiTextRef.current = "";
+
+    setCurrentUserText("");
+    setCurrentAIText("");
     setStatus("Disconnected");
   }
 
   async function connect() {
+    if (
+      sessionRef.current ||
+      status === "Connecting"
+    ) {
+      return;
+    }
+
     try {
       setError("");
       setStatus("Connecting");
 
-      // 1. Request a temporary Gemini token from our backend.
+      console.log("Requesting Gemini token from:", BACKEND_URL);
+
+      // 1. Request a temporary Gemini token from the backend.
       const response = await fetch(
         `${BACKEND_URL}/api/voice/token`,
-        { method: "POST" }
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
 
       if (!response.ok) {
-        throw new Error("Could not obtain a Gemini session token.");
+        const responseText = await response.text();
+
+        throw new Error(
+          `Token request failed (${response.status}): ${responseText || response.statusText
+          }`
+        );
       }
 
       const result = await response.json();
 
       if (!result.success || !result.token) {
-        throw new Error("The backend did not return a valid token.");
+        throw new Error(
+          result.message || "The backend did not return a valid token."
+        );
       }
 
-      // 2. Prepare audio. Microphone capture starts after permission.
+      // 2. Prepare audio. This is initiated by the user's button click.
       const context = new AudioContext();
       audioContextRef.current = context;
+
       await context.resume();
 
-      // 3. Connect directly to Gemini Live using the temporary token.
+      console.log("AudioContext state:", context.state);
+      console.log("Audio sample rate:", context.sampleRate);
+
+      // 3. Connect to Gemini Live using the temporary token.
       const ai = new GoogleGenAI({
         apiKey: result.token,
-        httpOptions: { apiVersion: "v1beta" },
+        httpOptions: {
+          apiVersion: "v1beta",
+        },
       });
 
       const session = await ai.live.connect({
         model: "gemini-3.8-live",
         config: {
           responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
           systemInstruction:
             "You are a helpful, friendly voice assistant. " +
             "Keep answers conversational and concise.",
         },
+
         callbacks: {
           onopen: () => {
             console.log("Gemini Live WebSocket connected!");
@@ -144,44 +236,84 @@ export default function useGeminiLive() {
           },
 
           onmessage: (message) => {
+            const content = message.serverContent;
+
+            if (!content) return;
+
             console.log(
-              "GEMINI MESSAGE JSON:",
+              "Gemini Live message:",
               JSON.stringify(message, null, 2)
             );
 
-            const content = message.serverContent;
-            if (content?.inputTranscription) {
-              console.log("YOU SAID:", content.inputTranscription.text);
-            }
-            if (content?.outputTranscription) {
-              console.log("GEMINI SAID:", content.outputTranscription.text);
+            // 1. Display the user's transcription.
+            if (content.inputTranscription?.text) {
+              userTextRef.current +=
+                content.inputTranscription.text;
+
+              setCurrentUserText(userTextRef.current);
             }
 
-            if (content?.modelTurn?.parts) {
-              for (const part of content.modelTurn.parts) {
-                if (part.inlineData) {
-                  console.log("GEMINI AUDIO RECEIVED:", part.inlineData.mimeType);
-                }
-              }
+            // 2. Display Gemini's response transcription.
+            if (content.outputTranscription?.text) {
+              aiTextRef.current +=
+                content.outputTranscription.text;
+
+              setCurrentAIText(aiTextRef.current);
             }
-            const parts =
-              message.serverContent?.modelTurn?.parts || [];
+
+            // 3. Play Gemini's audio response.
+            const parts = content.modelTurn?.parts || [];
 
             for (const part of parts) {
               if (part.inlineData?.data) {
+                console.log(
+                  "Gemini audio received:",
+                  part.inlineData.mimeType
+                );
+
                 playAudio(part.inlineData.data);
               }
+            }
+
+            // 4. Save the completed conversation turn.
+            if (content.turnComplete) {
+              const userText = userTextRef.current.trim();
+              const aiText = aiTextRef.current.trim();
+
+              setChatMessages((previous) => [
+                ...previous,
+                ...(userText
+                  ? [{ role: "user", text: userText }]
+                  : []),
+                ...(aiText
+                  ? [{ role: "assistant", text: aiText }]
+                  : []),
+              ]);
+
+              userTextRef.current = "";
+              aiTextRef.current = "";
+
+              setCurrentUserText("");
+              setCurrentAIText("");
             }
           },
 
           onerror: (event) => {
             console.error("Gemini Live error:", event);
-            setError(event.message || "Gemini connection error.");
+
+            setError(
+              event?.message || "Gemini connection error."
+            );
             setStatus("Error");
           },
 
-          onclose: () => {
-            console.log("Gemini Live WebSocket closed:", event);
+          onclose: (event) => {
+            console.log(
+              "Gemini Live WebSocket closed:",
+              event
+            );
+
+            sessionRef.current = null;
             setStatus("Disconnected");
           },
         },
@@ -189,7 +321,7 @@ export default function useGeminiLive() {
 
       sessionRef.current = session;
 
-      // 4. Ask for microphone permission.
+      // 4. Request microphone permission.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -201,7 +333,7 @@ export default function useGeminiLive() {
       micStreamRef.current = stream;
 
       console.log(
-        "MICROPHONE TRACKS:",
+        "Microphone tracks:",
         stream.getAudioTracks().map((track) => ({
           label: track.label,
           enabled: track.enabled,
@@ -210,28 +342,37 @@ export default function useGeminiLive() {
         }))
       );
 
-      // 5. Capture audio and convert it to 16 kHz PCM.
+      // 5. Capture microphone audio and resample to 16 kHz PCM.
       const micSource = context.createMediaStreamSource(stream);
       sourceRef.current = micSource;
 
-      const processor = context.createScriptProcessor(4096, 1, 1);
+      const processor = context.createScriptProcessor(
+        4096,
+        1,
+        1
+      );
+
       processorRef.current = processor;
 
       let sampleBuffer = [];
 
       processor.onaudioprocess = (event) => {
-        if (!sessionRef.current) return;
+        if (
+          !sessionRef.current ||
+          context.state !== "running"
+        ) {
+          return;
+        }
 
         const input = event.inputBuffer.getChannelData(0);
-        const inputRate = context.sampleRate;
-        const ratio = inputRate / 16000;
+        const ratio = context.sampleRate / 16000;
 
-        // Simple resampling from the device sample rate to 16 kHz.
+        // Linear sample selection for basic resampling.
         for (let i = 0; i < input.length; i += ratio) {
           sampleBuffer.push(input[Math.floor(i)]);
         }
 
-        // Send short audio chunks.
+        // Send chunks of 100 ms at 16 kHz.
         const chunkSize = 1600;
 
         while (sampleBuffer.length >= chunkSize) {
@@ -239,27 +380,24 @@ export default function useGeminiLive() {
           const pcm = new Int16Array(chunk.length);
 
           for (let i = 0; i < chunk.length; i++) {
-            const sample = Math.max(-1, Math.min(1, chunk[i]));
-            pcm[i] = sample < 0
-              ? sample * 32768
-              : sample * 32767;
+            const sample = Math.max(
+              -1,
+              Math.min(1, chunk[i])
+            );
+
+            pcm[i] =
+              sample < 0
+                ? sample * 32768
+                : sample * 32767;
           }
 
           const bytes = new Uint8Array(pcm.buffer);
+
           let binary = "";
 
           for (let i = 0; i < bytes.length; i++) {
             binary += String.fromCharCode(bytes[i]);
           }
-
-          const samples = event.inputBuffer.getChannelData(0);
-
-          const rms = Math.sqrt(
-            samples.reduce((sum, sample) => sum + sample * sample, 0) /
-            samples.length
-          );
-
-          console.log("MIC RMS:", rms);
 
           sessionRef.current.sendRealtimeInput({
             audio: {
@@ -272,14 +410,21 @@ export default function useGeminiLive() {
 
       micSource.connect(processor);
 
-      // Keep the processor running without playing microphone audio.
+      // Keep the processor active without playing microphone audio.
       const silentGain = context.createGain();
       silentGain.gain.value = 0;
+
+      silentGainRef.current = silentGain;
+
       processor.connect(silentGain);
       silentGain.connect(context.destination);
     } catch (err) {
-      console.error(err);
-      setError(err.message || "Could not start the voice agent.");
+      console.error("Could not start Gemini Live:", err);
+
+      setError(
+        err?.message || "Could not start the voice agent."
+      );
+
       await disconnect();
     }
   }
@@ -289,5 +434,8 @@ export default function useGeminiLive() {
     error,
     connect,
     disconnect,
+    chatMessages,
+    currentUserText,
+    currentAIText,
   };
 }
