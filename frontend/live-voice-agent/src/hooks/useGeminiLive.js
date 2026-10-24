@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { GoogleGenAI, Modality } from "@google/genai";
 
-const BACKEND_URL = "http://localhost:5000";
+const BACKEND_URL = `http://localhost:${import.meta.env.VITE_PORT}`;
 
 export default function useGeminiLive() {
   const [status, setStatus] = useState("Disconnected");
@@ -85,7 +85,7 @@ export default function useGeminiLive() {
     playbackSourcesRef.current.forEach((source) => {
       try {
         source.stop();
-      } catch {}
+      } catch { }
     });
     playbackSourcesRef.current.clear();
 
@@ -144,26 +144,26 @@ export default function useGeminiLive() {
           },
 
           onmessage: (message) => {
-             console.log(
-    "GEMINI MESSAGE JSON:",
-    JSON.stringify(message, null, 2)
-  );
+            console.log(
+              "GEMINI MESSAGE JSON:",
+              JSON.stringify(message, null, 2)
+            );
 
             const content = message.serverContent;
             if (content?.inputTranscription) {
-  console.log("YOU SAID:", content.inputTranscription.text);
-}
-if (content?.outputTranscription) {
-  console.log("GEMINI SAID:", content.outputTranscription.text);
-}
+              console.log("YOU SAID:", content.inputTranscription.text);
+            }
+            if (content?.outputTranscription) {
+              console.log("GEMINI SAID:", content.outputTranscription.text);
+            }
 
-if (content?.modelTurn?.parts) {
-  for (const part of content.modelTurn.parts) {
-    if (part.inlineData) {
-      console.log("GEMINI AUDIO RECEIVED:", part.inlineData.mimeType);
-    }
-  }
-}
+            if (content?.modelTurn?.parts) {
+              for (const part of content.modelTurn.parts) {
+                if (part.inlineData) {
+                  console.log("GEMINI AUDIO RECEIVED:", part.inlineData.mimeType);
+                }
+              }
+            }
             const parts =
               message.serverContent?.modelTurn?.parts || [];
 
@@ -175,7 +175,7 @@ if (content?.modelTurn?.parts) {
           },
 
           onerror: (event) => {
-             console.error("Gemini Live error:", event);
+            console.error("Gemini Live error:", event);
             setError(event.message || "Gemini connection error.");
             setStatus("Error");
           },
@@ -201,14 +201,14 @@ if (content?.modelTurn?.parts) {
       micStreamRef.current = stream;
 
       console.log(
-  "MICROPHONE TRACKS:",
-  stream.getAudioTracks().map((track) => ({
-    label: track.label,
-    enabled: track.enabled,
-    muted: track.muted,
-    readyState: track.readyState,
-  }))
-);
+        "MICROPHONE TRACKS:",
+        stream.getAudioTracks().map((track) => ({
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState,
+        }))
+      );
 
       // 5. Capture audio and convert it to 16 kHz PCM.
       const micSource = context.createMediaStreamSource(stream);
@@ -254,12 +254,12 @@ if (content?.modelTurn?.parts) {
 
           const samples = event.inputBuffer.getChannelData(0);
 
-const rms = Math.sqrt(
-  samples.reduce((sum, sample) => sum + sample * sample, 0) /
-  samples.length
-);
+          const rms = Math.sqrt(
+            samples.reduce((sum, sample) => sum + sample * sample, 0) /
+            samples.length
+          );
 
-console.log("MIC RMS:", rms);
+          console.log("MIC RMS:", rms);
 
           sessionRef.current.sendRealtimeInput({
             audio: {

@@ -152,22 +152,6 @@ function MainPage() {
                 </div>
             </div>
 
-            <div className="flex gap-3 bg-neutral-950 border border-red-900/60 p-3 rounded-xl">
-                <input
-                    type="text"
-                    placeholder="Type a message to the AI agent..."
-                    value={inputText}
-                    onChange={(e) => setTextInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                    className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-red-500"
-                />
-                <button
-                    onClick={handleSend}
-                    className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg text-sm font-semibold transition"
-                >
-                    Send
-                </button>
-            </div>
 
         </div>
     );
