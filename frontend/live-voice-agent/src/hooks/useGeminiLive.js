@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { GoogleGenAI, Modality } from "@google/genai";
 
-const BACKEND_URL = `http://localhost:${import.meta.env.VITE_PORT || 5001}`;
+const BACKEND_URL = `http://localhost:${import.meta.env.VITE_PORT || 5000}`;
 
 export default function useGeminiLive() {
   const [status, setStatus] = useState("Disconnected");
